@@ -18,6 +18,42 @@ The program inspects the Cargo directory (`~/.cargo/` or `$CARGO_HOME`) and can 
 
 Updates are being applied progressively. Some parts inherited from the original project may still use older APIs or dependencies.
 
+## What's new in 0.2.0
+
+- Much faster scanning of large caches: registry sources, directory sizes and `trim` now walk the disk in parallel with a single `stat()` per file.
+- The registry source cache no longer re-walks its directory on every access.
+- `trim` rejects invalid `--limit` values (negative, `NaN`, empty, non-ASCII) instead of treating them as "delete everything".
+- No more panics when a file disappears while sizes are being computed.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+## Project structure
+
+```text
+cargo-cache-ng/
+├── src/
+│   ├── cache/
+│   ├── commands/
+│   ├── top_items/
+│   ├── build.rs
+│   ├── clean_unref.rs
+│   ├── cli.rs
+│   ├── dirsizes.rs
+│   ├── library.rs
+│   ├── main.rs
+│   ├── remove.rs
+│   └── test_helpers.rs
+├── data/
+├── utils/
+├── Cargo.toml
+├── Cargo.lock
+├── CHANGELOG.md
+├── README.md
+├── COPYRIGHT
+├── LICENSE-MIT
+└── LICENSE-APACHE
+```
+
 ## Features
 
 - show the total Cargo cache size and its components;
@@ -36,6 +72,8 @@ Updates are being applied progressively. Some parts inherited from the original 
 - support `$CARGO_HOME` and custom locations.
 
 ## Installation from this fork
+
+The minimum supported Rust version (MSRV) is **1.85**.
 
 With a working Rust toolchain:
 
@@ -86,8 +124,9 @@ cargo cache --dry-run --autoclean
 # Remove extracted sources and Git checkouts
 cargo cache --autoclean
 
-# Remove items older than a date
-cargo cache --remove-if-older-than 2024.01.01
+# Remove items of a directory that are older than a date
+# (--remove-if-older-than / --remove-if-younger-than require --remove-dir)
+cargo cache --remove-dir git-db --remove-if-older-than 2024.01.01
 
 # Keep only the latest 3 archived versions
 cargo cache --keep-duplicate-crates 3
@@ -104,8 +143,8 @@ cargo cache local
 # Verify extracted sources
 cargo cache verify
 
-# Trim the cache to a size limit
-cargo cache trim --limit 10GB
+# Trim the cache to a size limit (unit is one letter: B, K, M, G or T)
+cargo cache trim --limit 10G
 ```
 
 Operations that modify disk contents generally support `--dry-run`. Check the exact options of the installed version with `cargo cache --help`, then use a dry run before an important cleanup.
@@ -155,6 +194,14 @@ Contributions are welcome for bug fixes, performance reviews, module modernizati
 
 Before a substantial contribution, open an issue to discuss its scope and avoid incompatible changes. Changes should remain focused and preserve existing behavior.
 
+Before opening a pull request, please run:
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets
+cargo test
+```
+
 ## Credits
 
 This project builds on the original work by **Matthias Krüger** and all contributors to [`cargo-cache`](https://github.com/matthiaskrgr/cargo-cache).
@@ -163,7 +210,7 @@ We preserve the original attribution and respect the MIT and Apache-2.0 licenses
 
 ## License
 
-Copyright 2017-2022 Matthias Krüger
+Copyright 2017-2022 Matthias Krüger, and the `cargo-cache-ng` contributors for the modifications made in this fork.
 
 This project is distributed under either the [MIT License](LICENSE-MIT) or the [Apache-2.0 License](LICENSE-APACHE), at the user's option.
 

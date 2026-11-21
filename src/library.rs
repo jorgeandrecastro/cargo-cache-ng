@@ -384,23 +384,18 @@ pub(crate) fn components_from_groups(input: Option<&str>) -> Result<Vec<Componen
         return Err(Error::RemoveDirNoArg);
     };
 
-    // sort failed and successful parses
-    #[allow(clippy::type_complexity)]
-    let (dirs, errors): (
-        Vec<Result<RemovableGroup, String>>,
-        Vec<Result<RemovableGroup, String>>,
-    ) = input_string
-        .split(',')
-        .map(str::parse)
-        .partition(Result::is_ok);
+    // parse every group, collecting the valid ones and the unrecognized ones separately
+    let mut groups: Vec<RemovableGroup> = Vec::new();
+    let mut invalid_dirs: Vec<String> = Vec::new();
+    for part in input_string.split(',') {
+        match part.parse::<RemovableGroup>() {
+            Ok(group) => groups.push(group),
+            Err(unrecognized) => invalid_dirs.push(unrecognized),
+        }
+    }
 
     // we got errors, abort
-    if !errors.is_empty() {
-        let invalid_dirs = errors
-            .into_iter()
-            .map(|e| e.err().unwrap())
-            .collect::<Vec<String>>();
-
+    if !invalid_dirs.is_empty() {
         let inv_dirs_joined = invalid_dirs.join(" ");
         let inv_dirs_trimmed = inv_dirs_joined.trim();
         //@TODO fix this enum variant name to be more
@@ -408,50 +403,39 @@ pub(crate) fn components_from_groups(input: Option<&str>) -> Result<Vec<Componen
     }
 
     // at this point we were able to parse all the user input.
-
-    // map the RemovableGroups to Dirs
-
-    // unwrap the Results
-    let dirs = dirs.into_iter().map(|d| d.ok().unwrap());
+    // map the RemovableGroups to Components
 
     let mut mapped_dirs = Vec::new();
 
-    dirs.for_each(|dir| match dir {
-        RemovableGroup::All => {
-            mapped_dirs.extend(
+    for group in groups {
+        match group {
+            RemovableGroup::All => {
                 // everything
-                vec![
+                mapped_dirs.extend([
                     Component::GitDB,
                     Component::GitRepos,
                     Component::RegistrySources,
                     Component::RegistryCrateCache,
                     Component::RegistryIndex,
-                ],
-            );
+                ]);
+            }
+            RemovableGroup::GitDB => {
+                mapped_dirs.extend([Component::GitDB, Component::GitRepos]);
+            }
+            RemovableGroup::GitRepos => {
+                mapped_dirs.push(Component::GitRepos);
+            }
+            RemovableGroup::RegistrySources => {
+                mapped_dirs.push(Component::RegistrySources);
+            }
+            RemovableGroup::RegistryCrateCache | RemovableGroup::Registry => {
+                mapped_dirs.extend([Component::RegistrySources, Component::RegistryCrateCache]);
+            }
+            RemovableGroup::RegistryIndex => {
+                mapped_dirs.push(Component::RegistryIndex);
+            }
         }
-        RemovableGroup::GitDB => {
-            mapped_dirs.extend(vec![Component::GitDB, Component::GitRepos]);
-        }
-        RemovableGroup::GitRepos => {
-            mapped_dirs.push(Component::GitRepos);
-        }
-        RemovableGroup::RegistrySources => {
-            mapped_dirs.push(Component::RegistrySources);
-        }
-        RemovableGroup::RegistryCrateCache => {
-            mapped_dirs.extend(vec![
-                Component::RegistrySources,
-                Component::RegistryCrateCache,
-            ]);
-        }
-        RemovableGroup::RegistryIndex => {
-            mapped_dirs.push(Component::RegistryIndex);
-        }
-        RemovableGroup::Registry => mapped_dirs.extend(vec![
-            Component::RegistrySources,
-            Component::RegistryCrateCache,
-        ]),
-    });
+    }
 
     // remove duplicates
     mapped_dirs.sort();
@@ -466,10 +450,32 @@ pub(crate) fn size_of_path(path: &Path) -> u64 {
     if path.is_dir() {
         cumulative_dir_size(path).dir_size
     } else {
-        fs::metadata(path)
-            .unwrap_or_else(|_| panic!("Failed to get metadata of file '{}'", &path.display()))
-            .len()
+        // a file that vanished in the meantime (e.g. concurrent cargo build) counts as 0
+        // instead of crashing the whole program
+        fs::metadata(path).map_or(0, |m| m.len())
     }
+}
+
+/// size of a single walkdir entry.
+/// uses the metadata walkdir already has (no extra stat); symlinks are resolved,
+/// and broken symlinks are skipped (returns None).
+fn entry_len(entry: &walkdir::DirEntry) -> Option<u64> {
+    if entry.file_type().is_symlink() {
+        fs::metadata(entry.path()).ok().map(|m| m.len())
+    } else {
+        entry.metadata().ok().map(|m| m.len())
+    }
+}
+
+/// sum of the sizes of everything below (and including) `root`, sequentially
+fn walk_size(root: &Path) -> u64 {
+    WalkDir::new(root)
+        .follow_root_links(false)
+        .into_iter()
+        // entries that vanish or become unreadable while we walk (#43) are simply skipped
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry_len(&entry))
+        .sum()
 }
 
 /// get the total size and number of files of a directory
@@ -482,36 +488,34 @@ pub(crate) fn cumulative_dir_size(dir: &Path) -> DirInfo {
         };
     }
 
-    // traverse recursively and sum filesizes, parallelized by rayon
-    let walkdir_start = dir.display().to_string();
-
-    let dir_size = WalkDir::new(&walkdir_start)
-        .into_iter()
-        .map(|e| e.unwrap().path().to_owned())
-        .filter(|f| f.exists()) // avoid broken symlinks
-        .collect::<Vec<_>>() // @TODO perhaps WalkDir will impl ParallelIterator one day
-        .par_iter()
-        .filter(|f| f.exists()) // check if the file still exists. Since collecting and processing a
-        // path, some time may have passed and if we have a "cargo build" operation
-        // running in the directory, a temporary file may be gone already and failing to unwrap() (#43)
-        .map(|f| {
-            fs::metadata(f)
-                .unwrap_or_else(|_| panic!("Failed to get metadata of file '{}'", &f.display()))
-                .len()
+    // top level entries of the directory
+    let children: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .collect()
         })
-        .sum();
+        .unwrap_or_default();
+
+    // each top level entry is walked in parallel, with ONE stat() per file.
+    // (the old code collected every path first and then called exists(), exists() and
+    // metadata() on each of them: three stat() calls per file plus a huge temporary Vec)
+    let root_len = fs::metadata(dir).map_or(0, |m| m.len());
+    let children_size: u64 = children.par_iter().map(|child| walk_size(child)).sum();
+    let dir_size = root_len + children_size;
 
     // for the file number, we don't want the actual number of files but only the number of
     // files in the current directory, limit search depth
-
-    let file_number = if walkdir_start.contains("registry") {
-        WalkDir::new(&walkdir_start)
+    let file_number = if dir.to_string_lossy().contains("registry") {
+        WalkDir::new(dir)
             .max_depth(2)
             .min_depth(2)
             .into_iter()
+            .filter_map(Result::ok)
             .count()
     } else {
-        fs::read_dir(dir).unwrap().count()
+        children.len()
     } as u64;
 
     DirInfo {
@@ -548,8 +552,8 @@ pub(crate) fn get_info(c: &CargoCachePaths, s: &DirSizes<'_>) -> String {
     )
     .unwrap();
 
-    strn.push_str(&c.bin_dir.display().to_string());
-    strn.push('\n');
+    // write the paths directly into the buffer instead of building a temporary String
+    writeln!(strn, "{}", c.bin_dir.display()).unwrap();
     writeln!(
         strn,
         "\t{} binaries installed in binary directory, total size: {}",
@@ -561,8 +565,7 @@ pub(crate) fn get_info(c: &CargoCachePaths, s: &DirSizes<'_>) -> String {
     strn.push_str("\tUse 'cargo uninstall' to remove binaries if needed.\n");
     strn.push('\n');
 
-    strn.push_str(&c.registry.display().to_string());
-    strn.push('\n');
+    writeln!(strn, "{}", c.registry.display()).unwrap();
     writeln!(
         strn,
         "\tRegistry root dir, size: {}",
@@ -572,8 +575,7 @@ pub(crate) fn get_info(c: &CargoCachePaths, s: &DirSizes<'_>) -> String {
     strn.push_str("\tCrate registries are stored here.\n");
     strn.push('\n');
 
-    strn.push_str(&c.registry_index.display().to_string());
-    strn.push('\n');
+    writeln!(strn, "{}", c.registry_index.display()).unwrap();
     writeln!(
         strn,
         "\tRegistry index, size: {}",
@@ -586,8 +588,7 @@ pub(crate) fn get_info(c: &CargoCachePaths, s: &DirSizes<'_>) -> String {
     strn.push('\n');
 
     // source archives are extracted here, will be reextracted from the downloaded source if removed
-    strn.push_str(&c.registry_pkg_cache.display().to_string());
-    strn.push('\n');
+    writeln!(strn, "{}", c.registry_pkg_cache.display()).unwrap();
     writeln!(
         strn,
         "\tCrate source package archive, size: {}",
@@ -599,8 +600,7 @@ pub(crate) fn get_info(c: &CargoCachePaths, s: &DirSizes<'_>) -> String {
     strn.push_str("\tThey will be redownloaded as needed.\n");
     strn.push('\n');
 
-    strn.push_str(&c.registry_sources.display().to_string());
-    strn.push('\n');
+    writeln!(strn, "{}", c.registry_sources.display()).unwrap();
 
     writeln!(
         strn,
@@ -612,8 +612,7 @@ pub(crate) fn get_info(c: &CargoCachePaths, s: &DirSizes<'_>) -> String {
     strn.push_str("\tThey will be reextracted from the package archive as needed.\n");
     strn.push('\n');
 
-    strn.push_str(&c.git_repos_bare.display().to_string());
-    strn.push('\n');
+    writeln!(strn, "{}", c.git_repos_bare.display()).unwrap();
     writeln!(
         strn,
         "\tGit database, size: {}",
@@ -624,8 +623,7 @@ pub(crate) fn get_info(c: &CargoCachePaths, s: &DirSizes<'_>) -> String {
     strn.push_str("\tRemoved git repositories will be recloned as needed.\n");
     strn.push('\n');
 
-    strn.push_str(&c.git_checkouts.display().to_string());
-    strn.push('\n');
+    writeln!(strn, "{}", c.git_checkouts.display()).unwrap();
     writeln!(
         strn,
         "\tGit repo checkouts, size: {}",
@@ -652,15 +650,22 @@ pub(crate) fn size_diff_format(
 
     let size_diff_human_readable = size_diff.format_size_i(DECIMAL);
     let size_before_human_readabel = size_before.format_size(DECIMAL);
+
     // calculate change in percentage
     // when printing, we are going to cut off everything but a few decimal places anyway, so
     // precision is not much of an issue.
-
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-    let perc: f32 =
-        (((size_after as f64 / size_before as f64) * f64::from(100)) - f64::from(100)) as f32;
-    // truncate to 2 decimal digits
-    let percentage: f32 = ((perc * f32::from(100_i8)).trunc()) / (f32::from(100_u8));
+    // BUGFIX: if the size before was 0, the percentage is a division by zero ("inf%"),
+    // so in that case we simply don't print a percentage.
+    let percentage_text = if size_before == 0 {
+        String::new()
+    } else {
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+        let perc: f32 =
+            (((size_after as f64 / size_before as f64) * f64::from(100)) - f64::from(100)) as f32;
+        // truncate to 2 decimal digits
+        let percentage: f32 = ((perc * f32::from(100_i8)).trunc()) / (f32::from(100_u8));
+        format!(", {percentage}%")
+    };
 
     if size_before == size_after {
         if display_size_before {
@@ -670,10 +675,10 @@ pub(crate) fn size_diff_format(
         }
     } else if display_size_before {
         format!(
-            "{size_before_human_readabel} => {size_after_human_readable} ({sign}{size_diff_human_readable}, {percentage}%)"
+            "{size_before_human_readabel} => {size_after_human_readable} ({sign}{size_diff_human_readable}{percentage_text})"
         )
     } else {
-        format!("{size_after_human_readable} ({sign}{size_diff_human_readable}, {percentage}%)")
+        format!("{size_after_human_readable} ({sign}{size_diff_human_readable}{percentage_text})")
     }
 }
 
@@ -955,6 +960,47 @@ mod libtests {
         // should be empty now
         let last = iter.next();
         assert!(last.is_none(), "found another directory?!: '{last:?}'");
+    }
+
+    #[test]
+    fn test_cumulative_dir_size_and_size_of_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a"), vec![0_u8; 1000]).unwrap();
+        fs::create_dir(tmp.path().join("sub")).unwrap();
+        fs::write(tmp.path().join("sub").join("b"), vec![0_u8; 500]).unwrap();
+
+        let info = cumulative_dir_size(tmp.path());
+        // directories themselves also have a (filesystem dependent) size, hence >=
+        assert!(info.dir_size >= 1500, "dir_size: {}", info.dir_size);
+        // two entries at the top level: "a" and "sub"
+        assert_eq!(info.file_number, 2);
+
+        // a missing directory or file counts as 0 and must not panic
+        assert_eq!(cumulative_dir_size(&tmp.path().join("missing")).dir_size, 0);
+        assert_eq!(size_of_path(&tmp.path().join("missing")), 0);
+        assert_eq!(size_of_path(&tmp.path().join("a")), 1000);
+    }
+
+    #[test]
+    fn test_size_diff_format_zero_before_has_no_percentage() {
+        let s = size_diff_format(0, 1000, false);
+        assert!(!s.contains("inf"), "got: {s}");
+        assert!(!s.contains('%'), "got: {s}");
+    }
+
+    #[test]
+    fn test_components_from_groups() {
+        let c = components_from_groups(Some("git-repos,git-repos")).unwrap();
+        assert_eq!(c, vec![Component::GitRepos]);
+
+        assert!(matches!(
+            components_from_groups(Some("git-repos,nope")),
+            Err(Error::InvalidDeletableDirs(s)) if s == "nope"
+        ));
+        assert!(matches!(
+            components_from_groups(None),
+            Err(Error::RemoveDirNoArg)
+        ));
     }
 }
 

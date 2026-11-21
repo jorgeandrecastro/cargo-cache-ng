@@ -9,6 +9,7 @@
 
 // TODO: add remove_all() and remove_item() method?
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 // this is impl'd by the bin, git_bare_repos and git_checkouts cache
@@ -133,12 +134,30 @@ pub(crate) trait RegistrySubCache {
 /// get the name of a cache directory from a path.
 /// if the full path is bla/github.com-1ecc6299db9ec823, we return github.com
 pub(crate) fn get_cache_name(path: &Path) -> String {
-    // save only the last path element bla/github.com-1ecc6299db9ec823 -> github.com-1ecc6299db9ec823
-    let file_name = path.file_name();
-    let last = file_name.unwrap().to_str().unwrap().to_string();
-    let mut v = last.split('-').collect::<Vec<_>>();
-    // remove the hash
-    let _ = v.pop();
-    // recombine as String
-    v.join("-")
+    // last path element: bla/github.com-1ecc6299db9ec823 -> github.com-1ecc6299db9ec823
+    let last = path
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    // drop the trailing "-<hash>" (no allocation of an intermediate Vec)
+    last.rsplit_once('-').map_or("", |(name, _hash)| name).to_string()
+}
+
+/// lists the registry directories (`github.com-1ecc6299db9ec823`, ...) found in `path`.
+/// returns an empty list if `path` does not exist or cannot be read.
+pub(crate) fn registry_dirs(path: &Path) -> Vec<PathBuf> {
+    fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|p| {
+                    p.is_dir()
+                        && p.file_name()
+                            .and_then(|n| n.to_str())
+                            .is_some_and(|n| n.contains('-'))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }

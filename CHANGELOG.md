@@ -1,3 +1,37 @@
+# Changelog
+
+# cargo-cache-ng (this fork)
+
+## Version 0.2.0
+```
+Performance:
+    Registry source cache: files() no longer re-walks the whole directory on every call
+    Compute file list, file count and total size of registry sources in a single parallel pass
+    Registry pkg cache: one stat() per file instead of two, file lists are sorted only once
+    cumulative_dir_size: one stat() per file instead of three, no intermediate Vec
+    Scan registries and cache items in parallel (trim, total sizes)
+    trim: compute last access time and size of each item in a single parallel pass
+    Avoid cloning every path just to count items
+
+Fixes:
+    trim: reject negative, NaN, infinite and empty --limit values (they could mean "limit 0", i.e. delete everything)
+    trim: fix panics on non-ASCII --limit values
+    trim: don't panic when the access time is unavailable, fall back to the modification time
+    Fix total_checkout_folders_sorted() returning an unsorted list
+    Don't panic when a file vanishes while sizes are computed (#43)
+    Don't print "inf%" in the size summary when the previous size was 0
+
+Internal:
+    Simplify components_from_groups()
+    Write the --info output directly into the buffer instead of building temporary strings
+    Add unit tests for directory sizes, size_diff_format, components_from_groups and invalid trim limits
+
+Documentation:
+    README: fix the trim example (--limit takes a single-letter unit, e.g. 10G)
+    README: fix the --remove-if-older-than example (it requires --remove-dir)
+    README: document the MSRV and update the project structure
+```
+
 ## Version 0.1.0
 ```
 Fork:
@@ -40,7 +74,12 @@ Dependencies:
 ```
 
 
-## Git
+# Upstream cargo-cache history (before the fork)
+
+The entries below are the original changelog of `cargo-cache` by Matthias Krüger.
+Their version numbers belong to the upstream project, not to cargo-cache-ng.
+
+## Unreleased upstream changes (inherited at fork time)
 ```
 Fix --keep-duplicate-crates which was counting wrong and only removing package == <N> and not every package bigger than <N> (#122)
 Fix --remove-if.. --remove-dir=x which was treated like just --remove-dir, skipped validating the remove-if date and removed everything (#127)
@@ -384,6 +423,7 @@ Updated dependencies:
 	regex 1.1.6 -> 1.2.0
 	walkdir: 2.2.7 -> 2.2.9
 ````
+
 ## Version 0.2.1 (319bee6)
 ````
 Fix version numbers registry source cache findings of query subcmd being cut off (#41)
@@ -399,6 +439,7 @@ Updated dependencies:
 	cargo-metadata: 0.7.4 -> 0.8.0
 	rustc_tools_util: 0.1.1-> 0.2.0
 ````
+
 ## Version 0.2.0 (eada74c)
 ````
 Parallelize internal cache accesses resulting in reduced wall clock execution time
@@ -429,6 +470,7 @@ Update dependencies:
 	cargo_metadata: new
 	home: new
 ````
+
 ## Version 0.1.2 (01f6952)
 ````
 run cargo update
@@ -450,6 +492,7 @@ dependencies: update rustc_tools_util from 0.1.0 to 0.1.1
 add readme key to Cargo.toml
 add crates.io shield to readme
 ````
+
 ## Version 0.1.0 (2ec7647)
 ````
 Initial release on crates.io

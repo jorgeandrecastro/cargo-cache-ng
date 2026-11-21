@@ -12,6 +12,7 @@
 // note that this does not take account the registry indices and the installed binaries in calculations
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::cache::caches::*;
 use crate::cache::*;
@@ -19,45 +20,81 @@ use crate::library::*;
 use crate::remove::*;
 
 use humansize::{FormatSize, DECIMAL};
+use rayon::prelude::*;
 use walkdir::WalkDir;
 
-fn get_last_access_of_item(path: &Path) -> std::time::SystemTime {
-    if path.is_file() {
-        // if we have a file, simply get the access time
-        std::fs::metadata(path).unwrap().accessed().unwrap()
-    } else {
-        // if we have a directory, get the latest access of all files of that directory
-        // get the max time / the file with the youngest access date / most recently accessed
-        WalkDir::new(path)
-            .into_iter()
-            .map(|e| e.unwrap().path().to_owned())
-            .map(|filepath| std::fs::metadata(filepath).unwrap().accessed().unwrap()) //@TODO make this an reusable function/method to simplify code
-            .max()
-            .unwrap()
+/// walks an item (file or directory) ONCE and returns
+/// (most recent access time of everything inside it, total size of its files).
+/// the metadata is taken from the walkdir entries, so there is no second stat() per file,
+/// and it never panics on unreadable entries or filesystems without atime support.
+fn scan_item(path: &Path) -> (SystemTime, u64) {
+    let mut latest = SystemTime::UNIX_EPOCH;
+    let mut size = 0_u64;
+
+    // WalkDir on a plain file yields just that file, so files and directories share this path
+    for entry in WalkDir::new(path).into_iter().filter_map(Result::ok) {
+        if let Ok(md) = entry.metadata() {
+            // fall back to the modification time if atime is not available
+            if let Ok(time) = md.accessed().or_else(|_| md.modified()) {
+                latest = latest.max(time);
+            }
+            if md.is_file() {
+                size += md.len();
+            }
+        }
     }
+    (latest, size)
 }
 
-// get a list of all cache items, sorted by file access time (young to old)
-pub(crate) fn gather_all_cache_items<'a>(
+/// all cache items with their size, sorted by last access (youngest first).
+/// the (expensive) disk scan of every item runs in parallel.
+fn gather_all_cache_items_with_size<'a>(
     git_checkouts_cache: &'a mut git_checkouts::GitCheckoutCache,
     bare_repos_cache: &'a mut git_bare_repos::GitRepoCache,
     registry_pkg_cache: &'a mut registry_pkg_cache::RegistryPkgCaches,
     registry_sources_cache: &'a mut registry_sources::RegistrySourceCaches,
-) -> Vec<&'a PathBuf> {
+) -> Vec<(&'a PathBuf, u64)> {
     let mut all_items: Vec<&PathBuf> = Vec::new();
     all_items.extend(git_checkouts_cache.items());
     all_items.extend(bare_repos_cache.items());
     all_items.extend(registry_pkg_cache.items());
     all_items.extend(registry_sources_cache.items());
 
-    // calculating the last access for each path ever time is not cheap, so use caching
-    // sort from youngest to oldest
-    all_items.sort_by_cached_key(|path| get_last_access_of_item(path));
-    // reverse the vec so that youngest access dates come first
-    // [2020, 2019, 2018, ....]
-    all_items.reverse();
+    // access time and size are computed together, once per item, in parallel
+    let mut scanned: Vec<(&PathBuf, SystemTime, u64)> = all_items
+        .par_iter()
+        .map(|path| {
+            let (accessed, size) = scan_item(path);
+            (*path, accessed, size)
+        })
+        .collect();
 
-    all_items
+    // youngest access first: [2020, 2019, 2018, ....]
+    scanned.sort_by(|a, b| b.1.cmp(&a.1));
+
+    scanned
+        .into_iter()
+        .map(|(path, _accessed, size)| (path, size))
+        .collect()
+}
+
+// get a list of all cache items, sorted by file access time (young to old)
+#[allow(dead_code)]
+pub(crate) fn gather_all_cache_items<'a>(
+    git_checkouts_cache: &'a mut git_checkouts::GitCheckoutCache,
+    bare_repos_cache: &'a mut git_bare_repos::GitRepoCache,
+    registry_pkg_cache: &'a mut registry_pkg_cache::RegistryPkgCaches,
+    registry_sources_cache: &'a mut registry_sources::RegistrySourceCaches,
+) -> Vec<&'a PathBuf> {
+    gather_all_cache_items_with_size(
+        git_checkouts_cache,
+        bare_repos_cache,
+        registry_pkg_cache,
+        registry_sources_cache,
+    )
+    .into_iter()
+    .map(|(path, _size)| path)
+    .collect()
 }
 
 /// figure out how big the cache should remain after trimming
@@ -65,42 +102,34 @@ fn parse_size_limit_to_bytes(limit: Option<&str>) -> Result<u64, Error> {
     match limit {
         None => unreachable!("No trim --limit was supplied although clap should enforce that!"),
         Some(limit) => {
-            // figure out the unit
-            let unit_multiplicator: Result<u64, Error> = match limit.chars().last() {
-                // we have no limit
-                None => Ok(0),
-                // we expect a unit such as B, K, M, G, T...
-                Some(c) => {
-                    if c.is_alphabetic() {
-                        match c {
-                            'b' | 'B' => Ok(1),
-                            'k' | 'K' => Ok(1024),
-                            'm' | 'M' => Ok(1024 * 1024),
-                            'g' | 'G' => Ok(1024 * 1024 * 1024),
-                            't' | 'T' => Ok(1024 * 1024 * 1024 * 1024),
-                            _ => Err(Error::TrimLimitUnitParseFailure(limit.to_string())),
-                        }
-                    } else {
-                        Err(Error::TrimLimitUnitParseFailure(limit.to_string()))
-                    }
-                }
+            let err = || Error::TrimLimitUnitParseFailure(limit.to_string());
+
+            // the last character is the unit: B, K, M, G, T (case insensitive)
+            let unit_char = limit.chars().last().ok_or_else(err)?;
+            let unit_multiplicator: u64 = match unit_char.to_ascii_lowercase() {
+                'b' => 1,
+                'k' => 1024,
+                'm' => 1024 * 1024,
+                'g' => 1024 * 1024 * 1024,
+                't' => 1024 * 1024 * 1024 * 1024,
+                _ => return Err(err()),
             };
 
-            let value: f64 = match limit[0..(limit.len() - 1)].parse() {
-                Ok(val) => val,
-                Err(_) => {
-                    return Err(Error::TrimLimitUnitParseFailure(limit.to_string()));
-                }
-            };
-            if value == 0.0 {
-                return Ok(0);
+            // the unit is ASCII here, so this slice can never cut a multibyte character
+            // (the old code could panic on e.g. "1é" or underflow on "")
+            let number = &limit[..limit.len() - unit_char.len_utf8()];
+            let value: f64 = number.parse().map_err(|_| err())?;
+
+            // SAFETY NET: "-5M" or "NaN" used to be cast to 0, meaning "delete EVERYTHING"
+            if !value.is_finite() || value < 0.0 {
+                return Err(err());
             }
+
             // we may truncate the value here but that's ok
-            #[allow(clippy::cast_lossless)]
             #[allow(clippy::cast_sign_loss)]
             #[allow(clippy::cast_possible_truncation)]
             #[allow(clippy::cast_precision_loss)]
-            Ok((value * unit_multiplicator? as f64) as u64)
+            Ok((value * unit_multiplicator as f64) as u64)
         }
     }
 }
@@ -119,51 +148,35 @@ pub(crate) fn trim_cache(
     let size_limit = parse_size_limit_to_bytes(unparsed_size_limit)?;
 
     // fast path:
-    // if the  limit is bigger than the cache size, we can return
-    // because we know we won't have to delete anything
+    // if the cache already fits in the limit, we know we won't have to delete anything
     let total_cache_size: u64 = git_checkouts_cache.total_size()
         + bare_repos_cache.total_size()
         + registry_pkg_cache.total_size()
         + registry_sources_cache.total_size();
 
-    if size_limit > total_cache_size {
-        //println!("trim: limit exceeds cache-limit, doing nothing");
+    if size_limit >= total_cache_size {
         return Ok(());
     }
 
-    // get all the items of the cache
-    let all_cache_items: Vec<&PathBuf> = gather_all_cache_items(
+    // get all the items of the cache with their sizes, youngest access first
+    let all_cache_items = gather_all_cache_items_with_size(
         git_checkouts_cache,
         bare_repos_cache,
         registry_pkg_cache,
         registry_sources_cache,
     );
 
-    // delete everything that is unneeded
-    let mut cache_size = 0;
+    let mut cache_size: u64 = 0;
     let mut removed_size: u64 = 0;
-    let mut removed_item_count = 0;
+    let mut removed_item_count: usize = 0;
 
-    // walk the items and collect items until we have reached the size limit
-    all_cache_items
-        // walk through the files, youngest item comes first, oldest item comes last
-        .iter()
-        .filter(|path| {
-            //@TODO query cache for size!
-            let item_size = size_of_path(path);
-            // add the item size to the cache size
-            cache_size += item_size;
-            // keep all items (for deletion) once we have exceeded the cache size
-            let keep_file = cache_size > size_limit;
-            if keep_file {
-                removed_size += item_size;
-                removed_item_count += 1;
-            }
-            keep_file
-        })
-        // .for_each(|path| println!("{}", path.display().to_string()));
-        // for debugging: the smaller the size limit is, the more items we keep for deletion
-        .for_each(|path| {
+    // walk from youngest to oldest: keep items until the size limit is reached,
+    // everything after that point (the older items) gets removed
+    for &(path, item_size) in &all_cache_items {
+        cache_size += item_size;
+        if cache_size > size_limit {
+            removed_size += item_size;
+            removed_item_count += 1;
             remove_file(
                 path,
                 dry_run,
@@ -172,7 +185,8 @@ pub(crate) fn trim_cache(
                 &DryRunMessage::Default,
                 None,
             );
-        });
+        }
+    }
 
     // invalidate caches that we might have touched
     git_checkouts_cache.invalidate();
@@ -220,11 +234,26 @@ mod parse_size_limit {
         assert_eq!(p(Some("1337M")).unwrap(), 1_401_946_112);
 
         assert_eq!(p(Some("1.5k")).unwrap(), 1_536);
+        assert_eq!(p(Some("0M")).unwrap(), 0);
 
         match p(Some("1_")) {
             Ok(_) => panic!("expected error"),
             Err(Error::TrimLimitUnitParseFailure(string)) => assert_eq!(string, "1_"),
             Err(..) => panic!("did not get enum variant TrimParseLimitUnitParseFailure"),
+        }
+    }
+
+    // inputs that used to panic or silently mean "delete everything"
+    #[test]
+    fn size_limit_invalid_inputs_are_errors() {
+        for bad in ["", "M", "-5M", "NaNM", "infM", "1é", "abcG"] {
+            assert!(
+                matches!(
+                    parse_size_limit_to_bytes(Some(bad)),
+                    Err(Error::TrimLimitUnitParseFailure(_))
+                ),
+                "expected an error for {bad:?}"
+            );
         }
     }
 
