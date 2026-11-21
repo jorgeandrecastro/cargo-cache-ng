@@ -95,9 +95,6 @@ name = "cargo-cache"
 path = "src/main.rs"
 test = true
 bench = true
-[package]
-name = "cargo-cache-ng"
-version = "0.9.0"
 
 [badges]
 #travis-ci = { repository = "jorgeandrecastro/cargo-cache-ng", branch = "master" }

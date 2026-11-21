@@ -128,8 +128,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-cache"
-version = "0.9.0"
+name = "cargo-cache-ng"
+version = "0.1.0"
 dependencies = [
  "cargo_metadata",
  "cfg-if",
