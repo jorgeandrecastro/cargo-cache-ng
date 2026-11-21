@@ -8,6 +8,7 @@ Historical author retained:
     Matthias Krüger <matthias.krueger@famsik.de>
 
 Modernization:
+    Rename the published package to cargo-cache-ng; the executable remains cargo-cache
     Bump package version to 0.9.0
     Migrate to the Rust 2024 edition
     MSRV: bump from 1.62 to 1.85

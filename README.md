@@ -5,7 +5,7 @@
 The program inspects the Cargo directory (`~/.cargo/` or `$CARGO_HOME`) and can display its size, inspect its components, and selectively remove cached items.
 
 > [!NOTE]
-> This is an independent fork. It keeps the `cargo-cache` binary and package names to preserve compatibility with existing users and scripts.
+> This is an independent fork published on crates.io as [`cargo-cache-ng`](https://crates.io/crates/cargo-cache-ng). It keeps the `cargo-cache` executable name to preserve compatibility with existing commands and scripts.
 
 ## Fork goals
 
@@ -40,7 +40,13 @@ Updates are being applied progressively. Some parts inherited from the original 
 With a working Rust toolchain:
 
 ```bash
-cargo install --git https://github.com/jorgeandrecastro/cargo-cache-ng cargo-cache
+cargo install cargo-cache-ng
+```
+
+To install the latest development version from Git:
+
+```bash
+cargo install --git https://github.com/jorgeandrecastro/cargo-cache-ng cargo-cache-ng
 ```
 
 To install from a local copy:
@@ -51,10 +57,10 @@ cd cargo-cache-ng
 cargo install --path .
 ```
 
-The package can be removed with Cargo:
+Installing the package provides the `cargo-cache` executable. The package can be removed with Cargo:
 
 ```bash
-cargo uninstall cargo-cache
+cargo uninstall cargo-cache-ng
 ```
 
 ## Usage
@@ -137,7 +143,7 @@ The project also retains a `ci-autoclean` mode for continuous integration enviro
 
 ```bash
 cargo install --git https://github.com/jorgeandrecastro/cargo-cache-ng \
-  --no-default-features --features ci-autoclean cargo-cache
+  --no-default-features --features ci-autoclean cargo-cache-ng
 cargo-cache
 ```
 
