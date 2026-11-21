@@ -1,4 +1,4 @@
-## Version 0.9.0
+## Version 0.1.0
 ```
 Fork:
     cargo-cache-ng continues the cargo-cache project originally created and maintained by
@@ -9,7 +9,7 @@ Historical author retained:
 
 Modernization:
     Rename the published package to cargo-cache-ng; the executable remains cargo-cache
-    Bump package version to 0.9.0
+    Set package version to 0.1.0
     Migrate to the Rust 2024 edition
     MSRV: bump from 1.62 to 1.85
     Migrate the CLI implementation from clap 3 to clap 4
