@@ -2,10 +2,10 @@
 name = "testcrate"
 version = "0.1.0"
 authors = ["Matthias Krüger <matthias.krueger@famsik.de>"]
-edition = "2018"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-rustc_tools_util = "0.2.0"
+rustc_tools_util = "0.4.2"
 clippy_travis_test = { git =  "https://github.com/matthiaskrgr/clippy_travis_test"}

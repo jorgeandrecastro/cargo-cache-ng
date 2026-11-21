@@ -117,12 +117,12 @@ fn main() {
     let config_enum = cli::clap_to_enum(config);
 
     // handle hidden "version" subcommand
-    if config.is_present("version") || matches!(config_enum, CargoCacheCommands::Version) {
+    if matches!(config_enum, CargoCacheCommands::Version) {
         println!("cargo-cache {}", cli::get_version());
         process::exit(0);
     }
 
-    let debug_mode: bool = config.is_present("debug");
+    let debug_mode: bool = config.get_flag("debug");
 
     // if we are in "debug" mode, get the current time
     let time_started = if debug_mode {
@@ -308,7 +308,7 @@ fn main() {
         // This one must come BEFORE RemoveIfDate because that one also uses --remove dir
         CargoCacheCommands::RemoveDir { dry_run } => {
             let res = remove_dir_via_cmdline(
-                config.value_of("remove-dir"),
+                config.get_one::<String>("remove-dir").map(String::as_str),
                 dry_run,
                 &cargo_cache,
                 &mut size_changed,
@@ -507,7 +507,7 @@ fn main() {
         _ => (),
     }
 
-    if size_changed && !config.is_present("dry-run") {
+    if size_changed && !config.get_flag("dry-run") {
         // size has changed, print summary of how size has changed
 
         dirsizes::DirSizes::print_size_difference(

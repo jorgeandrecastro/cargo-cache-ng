@@ -1,3 +1,44 @@
+## Version 0.9.0
+```
+Fork:
+    cargo-cache-ng continues the cargo-cache project originally created and maintained by
+    Matthias Krüger. See https://github.com/jorgeandrecastro/cargo-cache-ng
+
+Historical author retained:
+    Matthias Krüger <matthias.krueger@famsik.de>
+
+Modernization:
+    Bump package version to 0.9.0
+    Migrate to the Rust 2024 edition
+    MSRV: bump from 1.62 to 1.85
+    Migrate the CLI implementation from clap 3 to clap 4
+    Replace removed clap 3 argument APIs with clap 4 APIs
+    Update documentation to present cargo-cache-ng as a fork
+    Update repository links to jorgeandrecastro/cargo-cache-ng
+    Preserve the MIT and Apache-2.0 licenses and original-project notices
+
+Dependencies:
+    cargo_metadata 0.15.2 -> 0.23
+    cfg-if 1.0.0 -> 1.0.5
+    chrono 0.4.23 -> 0.4.45
+    clap 3.0.0 -> 4.6.9
+    flate2 1.0.25 -> 1.1.11
+    git2 0.16 -> 0.21
+    home 0.5.4 -> 0.5
+    humansize 2.1.0 -> 2.1.3
+    rayon 1.6.1 -> 1.12
+    regex 1.7.1 -> 1.13
+    remove_dir_all 0.8.2 -> 1.0
+    rustc_tools_util 0.2.0 -> 0.4
+    tar 0.4.38 -> 0.4
+    unicode-normalization 0.1.22 -> 0.1.26
+    walkdir 2.3.2 -> 2.5
+    pretty_assertions 1.3.0 -> 1.4
+    fs_extra 1.2.0 -> 1.3
+    tempfile 3.4.0 -> 3.27
+```
+
+
 ## Git
 ```
 Fix --keep-duplicate-crates which was counting wrong and only removing package == <N> and not every package bigger than <N> (#122)
@@ -244,7 +285,7 @@ Add ci-autoclean feature
 		The feature creates a `cargo-cache` binary that only executes `cargo cache --autoclean` by default (requires no arguments, just run `cargo-cache`).
 		and has all other features and dependencies stripped out.
 		This is intended for usage on continuous integration when the $CARGO_HOME is cached in order to reduce size	before uploading the cargo home to the ci cache.
-		Run `cargo install (--git github.com/matthiaskrgr/cargo-cache / cargo-cache) --no-default-features --features ci-autoclean` to install inside ci.
+		Run `cargo install (--git github.com/jorgeandrecastro/cargo-cache-ng / cargo-cache) --no-default-features --features ci-autoclean` to install inside ci.
 
 Updated dependencies:
 	git2 0.10.2 -> 0.11.0

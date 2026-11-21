@@ -2,7 +2,7 @@
 name = "helloworld"
 version = "0.1.0"
 authors = ["Matthias Krüger <matthias.krueger@famsik.de>"]
-edition = "2018"
+edition = "2024"
 description = "This is a dummy crate to test cargo-cache. It's uploaded to cloudsmith"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

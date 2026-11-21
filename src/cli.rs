@@ -8,10 +8,8 @@
 // except according to those terms.
 
 /// This file provides the command line interface of the cargo-cache crate
-use clap::{App, AppSettings, Arg, ArgMatches};
+use clap::{Arg, ArgAction, ArgMatches, Command};
 
-use crate::library::*;
-use rustc_tools_util::*;
 
 /// cargo-cache can perform these operaitons, but only one at a time
 #[derive(Debug)]
@@ -71,7 +69,7 @@ pub(crate) enum CargoCacheCommands<'a> {
 }
 
 pub(crate) fn clap_to_enum(config: &ArgMatches) -> CargoCacheCommands<'_> {
-    let dry_run = config.is_present("dry-run");
+    let dry_run = config.get_flag("dry-run");
 
     /*
     // if no args were passed, or ONLY --debug is passed, print the default summary
@@ -98,7 +96,7 @@ pub(crate) fn clap_to_enum(config: &ArgMatches) -> CargoCacheCommands<'_> {
 
     // if config.is_present("debug") {
     // do not check for "--debug" since it is independent of all other flags
-    if config.is_present("version") || config.subcommand_matches("version").is_some() {
+    if config.subcommand_matches("version").is_some() {
         CargoCacheCommands::Version
     } else if config.subcommand_matches("sccache").is_some()
         || config.subcommand_matches("sc").is_some()
@@ -107,20 +105,21 @@ pub(crate) fn clap_to_enum(config: &ArgMatches) -> CargoCacheCommands<'_> {
     } else if config.subcommand_matches("toolchain").is_some() {
         CargoCacheCommands::Toolchain
     } else if let Some(trimconfig) = config.subcommand_matches("trim") {
-        let trim_dry_run = dry_run || trimconfig.is_present("dry-run");
+        let trim_dry_run = dry_run || trimconfig.get_flag("dry-run");
         CargoCacheCommands::Trim {
             dry_run: trim_dry_run,
-            trim_limit: trimconfig.value_of("trim_limit"),
+            trim_limit: trimconfig.get_one::<String>("trim_limit").map(String::as_str),
         } // take config trim_config.value_of("trim_limit")
     } else if let Some(clean_unref_config) = config.subcommand_matches("clean-unref") {
-        let arg_dry_run = dry_run || clean_unref_config.is_present("dry-run");
+        let arg_dry_run = dry_run || clean_unref_config.get_flag("dry-run");
         CargoCacheCommands::CleanUnref {
             dry_run: arg_dry_run,
-            manifest_path: clean_unref_config.value_of("manifest-path"),
+            manifest_path: clean_unref_config.get_one::<String>("manifest-path").map(String::as_str),
         } // clean_unref_cfg.value_of("manifest-path"),
-    } else if config.is_present("top-cache-items") {
+    } else if config.contains_id("top-cache-items") {
         let limit = config
-            .value_of("top-cache-items")
+            .get_one::<String>("top-cache-items")
+            .map(String::as_str)
             .unwrap_or("20" /* default*/)
             .parse()
             .unwrap_or(20 /* default*/);
@@ -134,51 +133,51 @@ pub(crate) fn clap_to_enum(config: &ArgMatches) -> CargoCacheCommands<'_> {
         || config.subcommand_matches("l").is_some()
     {
         CargoCacheCommands::Local
-    } else if config.is_present("info") {
+    } else if config.get_flag("info") {
         CargoCacheCommands::Info
-    } else if config.is_present("remove-dir")
-        && !(config.is_present("remove-if-younger-than")
-            || config.is_present("remove-if-older-than"))
+    } else if config.contains_id("remove-dir")
+        && !(config.contains_id("remove-if-younger-than")
+            || config.contains_id("remove-if-older-than"))
     {
         // This one must come BEFORE RemoveIfDate because that one also uses --remove dir
         CargoCacheCommands::RemoveDir { dry_run } //need more info
-    } else if config.is_present("autoclean-expensive")
-        || (config.is_present("gc-repos") && config.is_present("autoclean"))
+    } else if config.get_flag("autoclean-expensive")
+        || (config.get_flag("gc-repos") && config.get_flag("autoclean"))
     {
         // if we pass both --gc and --autoclean-expensive, we want autoclean-expensive to run
         // since is already includes --gc
         CargoCacheCommands::AutoCleanExpensive { dry_run }
-    } else if config.is_present("fsck-repos") {
+    } else if config.get_flag("fsck-repos") {
         CargoCacheCommands::FSCKRepos
-    } else if config.is_present("gc-repos") {
+    } else if config.get_flag("gc-repos") {
         CargoCacheCommands::GitGCRepos { dry_run }
-    } else if config.is_present("autoclean") {
+    } else if config.get_flag("autoclean") {
         CargoCacheCommands::AutoClean { dry_run }
-    } else if config.is_present("keep-duplicate-crates") {
+    } else if config.contains_id("keep-duplicate-crates") {
         let limit: u64 = config
-            .value_of_t("keep-duplicate-crates")
-            .map_err(|_| "Error: \"--keep-duplicate-crates\" expected an integer argument")
-            .unwrap_or_fatal_error();
+            .get_one::<String>("keep-duplicate-crates")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
         CargoCacheCommands::KeepDuplicateCrates { dry_run, limit }
     } else if config.subcommand_matches("registry").is_some()
         || config.subcommand_matches("r").is_some()
         || config.subcommand_matches("registries").is_some()
     {
         CargoCacheCommands::Registries
-    } else if config.is_present("list-dirs") {
+    } else if config.get_flag("list-dirs") {
         CargoCacheCommands::ListDirs
-    } else if config.is_present("remove-if-younger-than")
-        || config.is_present("remove-if-older-than")
+    } else if config.contains_id("remove-if-younger-than")
+        || config.contains_id("remove-if-older-than")
     {
         CargoCacheCommands::RemoveIfDate {
             dry_run,
-            arg_older: config.value_of("remove-if-younger-than"),
-            arg_younger: config.value_of("remove-if-older-than"),
-            dirs: config.value_of("remove-dir"),
+            arg_older: config.get_one::<String>("remove-if-younger-than").map(String::as_str),
+            arg_younger: config.get_one::<String>("remove-if-older-than").map(String::as_str),
+            dirs: config.get_one::<String>("remove-dir").map(String::as_str),
         }
     } else if let Some(verify_cfg) = config.subcommand_matches("verify") {
-        let dry_run2: bool = verify_cfg.is_present("dry-run") || config.is_present("dry-run");
-        let clean_corrupted: bool = verify_cfg.is_present("clean-corrupted");
+        let dry_run2: bool = verify_cfg.get_flag("dry-run") || config.get_flag("dry-run");
+        let clean_corrupted: bool = verify_cfg.get_flag("clean-corrupted");
         CargoCacheCommands::Verify {
             clean_corrupted,
             dry_run: dry_run2,
@@ -204,32 +203,36 @@ pub(crate) fn get_version() -> String {
 /// generates the clap config which is used to control the crate
 #[allow(clippy::too_many_lines)]
 pub(crate) fn gen_clap() -> ArgMatches {
-    let version_string = get_version();
+    let version_string: &'static str = Box::leak(get_version().into_boxed_str());
 
     let list_dirs = Arg::new("list-dirs")
         .short('l')
         .long("list-dirs")
-        .help("List all found directory paths");
+        .help("List all found directory paths")
+        .action(ArgAction::SetTrue);
 
     let remove_dir = Arg::new("remove-dir").short('r').long("remove-dir")
         .help("Remove directories, accepted values: all,git-db,git-repos,\nregistry-sources,registry-crate-cache,registry-index,registry")
-        .takes_value(true)
+        .num_args(1)
         .value_name("dir1,dir2,dir3");
 
     let gc_repos = Arg::new("gc-repos")
         .short('g')
         .long("gc")
-        .help("Recompress git repositories (may take some time)");
+        .help("Recompress git repositories (may take some time)")
+        .action(ArgAction::SetTrue);
 
     let fsck_repos = Arg::new("fsck-repos")
         .short('f')
         .long("fsck")
-        .help("Fsck git repositories");
+        .help("Fsck git repositories")
+        .action(ArgAction::SetTrue);
 
     let info = Arg::new("info")
         .short('i')
         .long("info")
         .conflicts_with("list-dirs")
+        .action(ArgAction::SetTrue)
         .help(
             "Print information cache directories, what they are for and what can be safely deleted",
         );
@@ -238,29 +241,32 @@ pub(crate) fn gen_clap() -> ArgMatches {
         .short('k')
         .long("keep-duplicate-crates")
         .help("Remove all but N versions of crate in the source archives directory")
-        .takes_value(true)
+        .num_args(1)
         .value_name("N");
 
     let dry_run = Arg::new("dry-run")
         .short('n')
         .long("dry-run")
-        .help("Don't remove anything, just pretend");
+        .help("Don't remove anything, just pretend")
+        .action(ArgAction::SetTrue);
 
     let autoclean = Arg::new("autoclean")
         .short('a')
         .long("autoclean")
-        .help("Removes crate source checkouts and git repo checkouts");
+        .help("Removes crate source checkouts and git repo checkouts")
+        .action(ArgAction::SetTrue);
 
     let autoclean_expensive = Arg::new("autoclean-expensive")
         .short('e')
         .long("autoclean-expensive")
-        .help("As --autoclean, but also recompresses git repositories");
+        .help("As --autoclean, but also recompresses git repositories")
+        .action(ArgAction::SetTrue);
 
     let list_top_cache_items = Arg::new("top-cache-items")
         .short('t')
         .long("top-cache-items")
         .help("List the top N items taking most space in the cache")
-        .takes_value(true)
+        .num_args(1)
         .value_name("N");
 
     let remove_if_older = Arg::new("remove-if-older-than")
@@ -269,7 +275,7 @@ pub(crate) fn gen_clap() -> ArgMatches {
         .help("Removes items older than specified date: YYYY.MM.DD or HH:MM:SS")
         .conflicts_with("remove-if-younger-than") // fix later
         .requires("remove-dir")
-        .takes_value(true)
+        .num_args(1)
         .value_name("date");
 
     let remove_if_younger = Arg::new("remove-if-younger-than")
@@ -278,16 +284,17 @@ pub(crate) fn gen_clap() -> ArgMatches {
         .help("Removes items younger than the specified date: YYYY.MM.DD or HH:MM:SS")
         .conflicts_with("remove-if-older-than") // fix later
         .requires("remove-dir")
-        .takes_value(true)
+        .num_args(1)
         .value_name("date");
 
     let debug = Arg::new("debug")
         .long("debug")
         .help("print some debug stats")
-        .hide(true);
+        .hide(true)
+        .action(ArgAction::SetTrue);
 
     // "version" subcommand which is also hidden, prints crate version
-    let version_subcmd = App::new("version").setting(AppSettings::Hidden);
+    let version_subcmd = Command::new("version").hide(true);
 
     /***************************
      *       Subcommands        *
@@ -299,23 +306,24 @@ pub(crate) fn gen_clap() -> ArgMatches {
         .short('s')
         .long("sort-by")
         .help("sort files alphabetically or by file size")
-        .takes_value(true)
-        .possible_values(["size", "name"]);
+        .num_args(1)
+        .value_parser(["size", "name"]);
 
     // arg of query sbcmd
     let human_readable = Arg::new("hr")
         .long("human-readable")
-        .help("print sizes in human readable format");
+        .help("print sizes in human readable format")
+        .action(ArgAction::SetTrue);
 
     // query subcommand to allow querying
-    let query = App::new("query")
+    let query = Command::new("query")
         .about("run a query")
         .arg(Arg::new("QUERY"))
         .arg(&query_order)
         .arg(&human_readable);
 
     // short q (shorter query sbcmd)
-    let query_short = App::new("q")
+    let query_short = Command::new("q")
         .about("run a query")
         .arg(Arg::new("QUERY"))
         .arg(&query_order)
@@ -324,26 +332,26 @@ pub(crate) fn gen_clap() -> ArgMatches {
 
     //<local>
     // local subcommand
-    let local = App::new("local").about("check local build cache (target) of a rust project");
+    let local = Command::new("local").about("check local build cache (target) of a rust project");
     // shorter local subcommand (l)
-    let local_short = App::new("l").about("check local build cache (target) of a rust project");
+    let local_short = Command::new("l").about("check local build cache (target) of a rust project");
     //</local>
 
     // <registry>
     // registry subcommand
-    let registry = App::new("registry").about("query each package registry separately");
-    let registry_short = App::new("r").about("query each package registry separately");
+    let registry = Command::new("registry").about("query each package registry separately");
+    let registry_short = Command::new("r").about("query each package registry separately");
     // hidden, but have "cargo cache registries" work too
-    let registries_hidden = App::new("registries")
+    let registries_hidden = Command::new("registries")
         .about("query each package registry separately")
-        .setting(AppSettings::Hidden);
+        .hide(true);
     //</registry>
 
     //<sccache>
     // local subcommand
-    let sccache = App::new("sccache").about("gather stats on a local sccache cache");
+    let sccache = Command::new("sccache").about("gather stats on a local sccache cache");
     // shorter local subcommand (l)
-    let sccache_short = App::new("sc").about("gather stats on a local sccache cache");
+    let sccache_short = Command::new("sc").about("gather stats on a local sccache cache");
     //</sccache>
 
     //<clean-unref>
@@ -357,10 +365,10 @@ pub(crate) fn gen_clap() -> ArgMatches {
     let manifest_path = Arg::new("manifest-path")
         .long("manifest-path")
         .help("Path to Cargo.toml")
-        .takes_value(true)
+        .num_args(1)
         .value_name("PATH");
 
-    let clean_unref = App::new("clean-unref")
+    let clean_unref = Command::new("clean-unref")
         .about("remove crates that are not referenced in a Cargo.toml from the cache")
         .arg(&manifest_path)
         .arg(&dry_run);
@@ -371,26 +379,27 @@ pub(crate) fn gen_clap() -> ArgMatches {
         .long("limit")
         .short('l')
         .help("size that the cache will be reduced to, for example: '6B', '1K', '4M', '5G' or '1T'")
-        .takes_value(true)
+        .num_args(1)
         .value_name("LIMIT")
         .required(true);
 
-    let trim = App::new("trim")
+    let trim = Command::new("trim")
         .about("trim old items from the cache until maximum cache size limit is reached")
         .arg(&size_limit)
         .arg(&dry_run);
 
     // </trim>
-    let toolchain = App::new("toolchain").about("print stats on installed toolchains");
+    let toolchain = Command::new("toolchain").about("print stats on installed toolchains");
 
     // <verify>
 
     let clean_corrupted = Arg::new("clean-corrupted")
         .long("clean-corrupted")
         .short('c')
-        .help("automatically remove corrupted cache entries");
+        .help("automatically remove corrupted cache entries")
+        .action(ArgAction::SetTrue);
 
-    let verify = App::new("verify")
+    let verify = Command::new("verify")
         .about("verify crate sources")
         .arg(&dry_run)
         .arg(&clean_corrupted);
@@ -402,11 +411,11 @@ pub(crate) fn gen_clap() -> ArgMatches {
     // subcommand hack to have "cargo cache --foo" and "cargo-cache --foo" work equally
     // "cargo cache foo" works because cargo, since it does not implement the "cache" subcommand
     // itself will look if there is a "cargo-cache" binary and exec that
-    let cache_subcmd = App::new("cache")
-        .version(&*version_string)
+    let cache_subcmd = Command::new("cache")
+        .version(version_string)
         .bin_name("cargo-cache")
         .about("Manage cargo cache")
-        .author("matthiaskrgr")
+        .author("Matthias Krüger")
         // todo: remove all these clones once clap allows it
         .subcommand(query.clone())
         .subcommand(query_short.clone())
@@ -435,13 +444,13 @@ pub(crate) fn gen_clap() -> ArgMatches {
         .arg(&remove_if_younger)
         .arg(&remove_if_older)
         .arg(&debug)
-        .setting(AppSettings::Hidden);
+        .hide(true);
 
-    App::new("cargo-cache")
-        .version(&*version_string)
+    Command::new("cargo-cache")
+        .version(version_string)
         .bin_name("cargo")
         .about("Manage cargo cache")
-        .author("matthiaskrgr")
+        .author("Matthias Krüger")
         .subcommand(cache_subcmd)
         .subcommand(query)
         .subcommand(query_short)
@@ -477,7 +486,6 @@ pub(crate) fn gen_clap() -> ArgMatches {
 mod clitests {
     use crate::test_helpers::bin_path;
     use pretty_assertions::assert_eq;
-    use rustc_tools_util::*;
     use std::process::Command;
 
     #[test]

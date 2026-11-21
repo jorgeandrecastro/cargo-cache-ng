@@ -2,7 +2,7 @@
 name = "use_cloudsmith_dep"
 version = "0.1.0"
 authors = ["Matthias Krüger <matthias.krueger@famsik.de>"]
-edition = "2018"
+edition = "2024"
 description = "crate which requires a dependency I uploaded to cloudsmith"
 # https://cloudsmith.io/~matthias-kruger/repos/ccart/packages/detail/cargo/helloworld/0.1.0/
 
@@ -10,4 +10,4 @@ description = "crate which requires a dependency I uploaded to cloudsmith"
 
 [dependencies]
 helloworld = { version = "0.1.0", registry = "cloudsmith" }
-rustc_tools_util =  { version = "0.2.0" }
+rustc_tools_util =  { version = "0.4" }

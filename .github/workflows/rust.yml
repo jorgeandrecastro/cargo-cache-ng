@@ -34,11 +34,11 @@ jobs:
         include:
           - build: linux-msrv-release
             os: ubuntu-latest
-            toolchain: 1.62
+            toolchain: 1.85
             release: true
           - build: linux-msrv-debug
             os: ubuntu-latest
-            toolchain: 1.62
+            toolchain: 1.85
             debug: true
 
           - build: linux-nightly-release
@@ -169,7 +169,7 @@ jobs:
         run: cargo cache --keep-duplicate-crates 0  --dry-run
       # check ci-autoclean feature
       - name: install with ci_autoclean feature
-        run: cargo install --force --git https://github.com/matthiaskrgr/cargo-cache --no-default-features --features ci-autoclean cargo-cache
+        run: cargo install --force --git https://github.com/jorgeandrecastro/cargo-cache-ng --no-default-features --features ci-autoclean cargo-cache
       - name: run ci_autoclean
         run: cargo-cache
   # check for vulns in deps with cargo-audit

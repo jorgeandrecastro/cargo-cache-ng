@@ -151,9 +151,12 @@ pub(crate) fn run_query(
     registry_pkg_cache: &mut registry_pkg_cache::RegistryPkgCaches,
     registry_sources_caches: &mut registry_sources::RegistrySourceCaches,
 ) -> Result<(), Error> {
-    let sorting = query_config.value_of("sort");
-    let query = query_config.value_of("QUERY").unwrap_or("" /* default */);
-    let hr_size = query_config.is_present("hr");
+    let sorting = query_config.get_one::<String>("sort").map(String::as_str);
+    let query = query_config
+        .get_one::<String>("QUERY")
+        .map(String::as_str)
+        .unwrap_or("" /* default */);
+    let hr_size = query_config.get_flag("hr");
 
     let mut output = String::new();
 
